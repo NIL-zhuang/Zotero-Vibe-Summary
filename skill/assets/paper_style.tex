@@ -1,0 +1,52 @@
+% ============================================================
+% 论文摘要 PDF 统一样式模板（配色 + 风格 + 完整 preamble）
+% 用法：在 paper.tex 中 \documentclass[11pt,a4paper]{ctexart} 之后
+%       \input{assets/paper_style.tex}
+% 仅含 preamble，不含 \documentclass / \begin{document}
+% 配色与组件统一，勿在正文自创新颜色或新环境
+% ============================================================
+
+% --- 数学 ---
+\usepackage{amsmath,amssymb,amsthm,mathtools,bm}
+% --- 图表 ---
+\usepackage{graphicx,booktabs,array,multirow,makecell}
+\usepackage[table]{xcolor}
+% --- 排版 ---
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{enumitem}        % 紧凑列表
+\usepackage{tcolorbox}       % 提示框/分析框
+\tcbuselibrary{skins,breakable}
+\usepackage{titlesec}
+\usepackage[colorlinks=true,linkcolor=teal,citecolor=teal,
+            bookmarksnumbered=true]{hyperref}  % 书签目录便于 PDF 导航
+
+% --- 配色（统一，勿随意新增） ---
+\definecolor{brandblue}{HTML}{2E54C8}
+\definecolor{okgreen}{HTML}{2E7D32}
+\definecolor{warnorange}{HTML}{EF6C00}
+\definecolor{badred}{HTML}{C62828}
+\definecolor{deeppurple}{HTML}{6A1B9A}
+\definecolor{headgray}{HTML}{283593}
+
+% --- 章节标题配色（headgray） ---
+\titleformat{\section}{\Large\bfseries\color{headgray}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries\color{headgray}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{headgray}}{\thesubsubsection}{0.6em}{}
+
+% --- 提示框：统一可复用环境，颜色按内容性质选 ---
+% 用法：\begin{callout}[okgreen] ... \end{callout}（缺省 brandblue）
+\newtcolorbox{callout}[1][brandblue]{
+  colback=#1!6, colframe=#1, boxrule=0.8pt, arc=2pt,
+  left=8pt,right=8pt,top=6pt,bottom=6pt, breakable}
+
+% --- 数值例子框：用于"喂进去什么、出来什么"的实例化解释 ---
+% 用法：\begin{example} ... \end{example}
+\newtcolorbox{example}{
+  enhanced, colback=gray!4, colframe=headgray!70, boxrule=0.6pt, arc=2pt,
+  left=8pt,right=8pt,top=6pt,bottom=6pt, breakable,
+  borderline west={3pt}{0pt}{headgray},
+  fonttitle=\bfseries, title={数值例子}}
+
+% --- 定理环境 ---
+\newtheorem{theorem}{定理}
+\newtheorem{corollary}{推论}
