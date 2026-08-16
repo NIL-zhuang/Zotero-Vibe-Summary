@@ -1,9 +1,6 @@
----paper
+---
+name: paper_summary
 description: When the user provides a Zotero Better BibTeX citation-key and asks to summarize/interpret a paper, refer to this rule. The ONLY input is a Zotero citekey; output is an interpretation PDF (brief or detailed) attached back into Zotero.
-alwaysApply: false
-enabled: true
-updatedAt: 2026-06-29T00:00:00.000Z
-provider: zhuangziyuan
 ---
 
 # 学术论文 PDF 解读规范（Zotero citekey 驱动）
@@ -26,20 +23,19 @@ provider: zhuangziyuan
 
 1. **拿 citekey**：用户提供 citekey；未提供则要求用户给出，不要用标题猜。
 2. **解析原 PDF 与 attachmentKey**（详见 4.1）：调 Better BibTeX JSON-RPC `item.attachments(citekey)`，得到原论文 PDF 的绝对 `path` 和附件 key（从 `open` URL 末段解析）。
-3. **生成解读 PDF**：从该原 PDF 截图、按第二章（详细）或第三章（简短）规范生成解读 PDF 到当前工作目录。
+3. **创建独立运行目录并生成解读 PDF**：为本次任务创建唯一的临时 `runDir`，写入标记文件 `.paper-summary-run`；所有截图、LaTeX 文件、校验产物及最终解读 PDF 都只能写入该目录。将 skill 自带的 `assets/paper_style.tex` 复制到 `runDir/assets/paper_style.tex` 后再编译。
 4. **挂回 Zotero**（详见 4.3）：调 bridge endpoint，把解读 PDF 作为附件挂到该论文条目下。
-5. **清理**：删除所有中间产物（见下）。
+5. **确认并强制清理**：仅在挂载结果通过 4.4 的成功判定后，删除整个 `runDir`，包括最终解读 PDF；挂载失败则保留 `runDir` 供重试或手动挂载。
 
-### 0.2 产物与清理
+### 0.2 独立运行目录与挂载后强制清理
 
-- **工作目录最终只保留解读 PDF 一个文件**（详细 `<论文标题>.pdf` 或简短 `<论文标题>_brief.pdf`）。原论文 PDF 始终在 Zotero storage 里，**不复制、不重命名到工作目录**。
-- 编译并校验通过后，**自动清理所有中间过程产物**，包括但不限于：
-  - LaTeX 源与中间件：`paper.tex`、`*.aux`、`*.log`、`*.out`、`*.toc`
-  - 临时文件：提取的全文文本、各种 `.log` 构建日志、校验用的渲染图
-  - `assets/` 整个图片目录（图片已嵌入解读 PDF，无需单独保留）
-- 解读 PDF 已被 Zotero 拷入 storage，工作目录里那份是否保留由用户决定，默认可删。
-
-> **不要删除样式模板**：`assets/paper_style.tex` 是 skill 自带的复用模板（位于 skill 目录，不在工作目录），编译时由 `paper.tex` 通过 `\input` 引用，属于工具而非中间产物，**永远不清理**。
+- **先隔离再生成**：每次任务必须创建唯一、绝对路径的临时 `runDir`（目录名以 `paper-summary-` 开头），并在其中创建 `.paper-summary-run` 标记文件。不得直接在当前工作目录、skill 目录或 Zotero storage 中生成过程文件。
+- **全部产物进入 `runDir`**：最终解读 PDF、`paper.tex`、`*.aux`、`*.log`、`*.out`、`*.toc`、全文文本、截图、渲染校验图及临时 `assets/` 都必须放入 `runDir`。工作目录不得遗留本次任务的任何文件。
+- **模板使用方式**：skill 原始模板 `assets/paper_style.tex` 永远只读、不得删除。编译前将它复制到 `runDir/assets/paper_style.tex`；该临时副本可随 `runDir` 删除。
+- **成功后全部删除**：挂载结果满足 4.4 的全部成功条件后，立即删除整个 `runDir`，包括最终生成的 `<论文标题>.pdf` 或 `<论文标题>_brief.pdf`。成功状态下，本地不保留本次任务的任何产物。
+- **严格限定删除目标**：删除前必须同时确认：`runDir` 是绝对路径、basename 以 `paper-summary-` 开头、目录内存在 `.paper-summary-run`，且它不是 `/`、当前工作目录、工作区根目录、skill 目录、Zotero 目录或上述目录的父目录。只能删除记录下来的这个精确 `runDir`；禁止清空当前目录、使用宽泛 glob，或删除其父目录。
+- **原论文只读**：4.1 解析出的原论文 `path` 只作为输入，永远不得删除、移动、重命名或修改。这里“删除 PDF”只指 `runDir` 中生成的解读 PDF，不是 Zotero storage 中的原论文 PDF。
+- **失败必须保留**：请求失败、响应无法解析、成功条件不完整或手动挂载尚未确认时，不得清理 `runDir`。必须向用户报告解读 PDF 的绝对路径以便重试或手动拖入；只有用户明确确认手动挂载完成后才删除 `runDir`。
 
 ---
 
@@ -246,7 +242,7 @@ pix.save("assets/figN_xxx.png")
 2. **不要目录、不要 `\tableofcontents`、不要书签分级**：篇幅短无需导航。
 3. **不要 `\newpage`**：内容连续排，自然分页即可。
 4. **文件命名**：解读 PDF 用 `<论文标题>_brief.pdf`（空格/特殊字符→下划线）；tex 源用 `paper.tex`（最终清理）。
-5. **清理与产物**：同零章，编译校验后清理所有中间产物，工作目录最终只留 `<论文标题>_brief.pdf`；并按第四章挂回 Zotero。
+5. **清理与产物**：同零章，所有内容均写入独立 `runDir`；挂载成功后删除整个 `runDir`，包括 `<论文标题>_brief.pdf`，本地不留任何本次任务产物。
 
 ### 3.2 内容结构（固定顺序，紧凑 1-2 页内）
 
@@ -321,7 +317,7 @@ curl -s -X POST http://127.0.0.1:23119/better-bibtex/json-rpc \
 
 ### 4.2 生成解读 PDF
 
-用 4.1 拿到的 `path` 作为原论文 PDF，按第二章（详细）或第三章（简短）规范截图、生成解读 PDF 到当前工作目录。
+用 4.1 拿到的 `path` 作为只读的原论文 PDF，按第二章（详细）或第三章（简短）规范截图，并将解读 PDF 及所有过程文件生成到本次任务的独立 `runDir`。
 
 ### 4.3 挂回 Zotero
 
@@ -339,10 +335,21 @@ curl -s -X POST http://127.0.0.1:23119/paper-bridge/attach \
   }))')"
 ```
 
-成功返回 `{"ok":true,"newAttachmentKey":"...","parentKey":"..."}`，解读 PDF 即作为附件出现在该论文条目下，并被 Zotero 拷入 storage、纳入同步与全文索引。
+成功返回 `{"ok":true,"newAttachmentKey":"...","parentKey":"..."}`，解读 PDF 即作为附件出现在该论文条目下，并被 Zotero 拷入 storage、纳入同步与全文索引。Bridge 必须等待 `Zotero.Attachments.importFromFile(...)` 和附件标题保存完成后才返回该响应；不得把请求已发送或 HTTP 200 单独视为挂载成功。
 
-### 4.4 失败兜底
+### 4.4 挂载确认与本地强制清理
+
+只有同时满足以下条件，才判定挂载成功：
+
+1. HTTP 响应状态为 200；
+2. 响应体可解析为 JSON；
+3. JSON 中 `ok` 严格等于 `true`；
+4. `newAttachmentKey` 存在且为非空字符串。
+
+全部满足后，先按 0.2 校验 `runDir` 的绝对路径、目录名与 `.paper-summary-run` 标记，再删除整个 `runDir`。删除后确认该路径已不存在；如果仍存在，必须报告清理失败，不得声称“本地文件已全部删除”。最终回复只说明“解读 PDF 已挂载到 Zotero，本地临时产物已全部删除”，不要提供已经失效的本地 PDF 路径。
+
+### 4.5 失败兜底
 
 - **连接失败 / 404**：说明 Bridge 插件未安装/未启用，或 Zotero 未运行。提示用户：先确认 Zotero 在运行，再在「工具 → 插件 → 齿轮 → Install Add-on From File」安装 `paper-bridge.xpi`。
-- **退化方案**：插件不可用时，给出等效的 Run JavaScript 片段（`Zotero.Attachments.importFromFile({file, parentItemID, contentType:"application/pdf"})`，parentItemID 由 attachmentKey 反查），让用户在「工具 → 开发者 → Run JavaScript」手动执行。
-- 不得静默失败：挂载未成功时必须明确告知用户解读 PDF 的本地绝对路径，以便手动拖入。
+- **退化方案**：插件不可用时，给出等效的 Run JavaScript 片段（`Zotero.Attachments.importFromFile({file, parentItemID, contentType:"application/pdf"})`，parentItemID 由 attachmentKey 反查），让用户在「工具 → 开发者 → Run JavaScript」手动执行。用户明确确认手动挂载成功前，必须保留 `runDir`。
+- 不得静默失败：挂载未成功时必须明确告知用户解读 PDF 的本地绝对路径，以便手动拖入；不得删除 `runDir`。
