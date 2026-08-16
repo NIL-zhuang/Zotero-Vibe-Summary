@@ -17,7 +17,7 @@ citekey  ──►  解析原论文 PDF  ──►  生成解读 PDF（紧凑 1-
 | 目录 | 作用 |
 |------|------|
 | [`plugin/`](plugin/) | **Paper Summary Bridge** —— 一个极简 Zotero 插件，注册本地 HTTP endpoint，把生成好的 PDF 通过官方 API 挂载为附件 |
-| [`skill/`](skill/) | **paper_summary skill** —— 给 AI agent 的规范，定义如何用 citekey 解析论文、生成 LaTeX 解读 PDF、调用 bridge 挂载 |
+| [`skill/`](skill/) | **paper-summary skill** —— 给 AI agent 的规范，定义如何用 citekey 解析论文、生成 LaTeX 解读 PDF、调用 bridge 挂载 |
 
 ```
 zotero-paper-summary/
@@ -66,7 +66,7 @@ curl -s -X POST http://127.0.0.1:23119/paper-bridge/attach \
 把 `skill/` 内容放到你的 AI agent 的 skill 目录。以 Claude Code 为例：
 
 ```bash
-cp -r skill ~/.claude/skills/paper_summary
+cp -r skill ~/.claude/skills/paper-summary
 # 或软链到本仓库
 ```
 

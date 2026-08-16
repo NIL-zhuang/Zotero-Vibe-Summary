@@ -1,5 +1,5 @@
 ---
-name: paper_summary
+name: paper-summary
 description: When the user provides a Zotero Better BibTeX citation-key and asks to summarize/interpret a paper, refer to this rule. The ONLY input is a Zotero citekey; output is an interpretation PDF (brief or detailed) attached back into Zotero.
 ---
 
