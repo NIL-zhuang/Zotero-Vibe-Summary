@@ -5,7 +5,7 @@
 只需提供一个 Better BibTeX 的 **citation-key**，整条链路自动完成：
 
 ```
-citekey  ──►  解析原论文 PDF  ──►  生成解读 PDF（紧凑 1-2 页 / 详细多章节）  ──►  作为附件挂回 Zotero
+citekey  ──►  解析原论文 PDF  ──►  生成解读 PDF（约 2 页并优先含主图 / 详细多章节）  ──►  作为附件挂回 Zotero
 ```
 
 ![解读 PDF 示例](asserts/demo.png)
@@ -36,7 +36,7 @@ zotero-paper-summary/
 ## 工作原理
 
 1. **解析**：skill 调用 Better BibTeX 的 JSON-RPC `item.attachments(citekey)`，拿到原论文 PDF 的绝对路径和附件 key。
-2. **生成**：AI agent 按 `SKILL.md` 规范，从原 PDF 截图、用 `xelatex` 编译出解读 PDF（默认紧凑 1-2 页，可要求详细多章节版）。
+2. **生成**：AI agent 按 `SKILL.md` 规范，从原 PDF 截图、用 `xelatex` 编译出解读 PDF（默认约 2 页并优先含 1 张主图，可要求详细多章节版）。
 3. **挂载**：skill `POST` 到插件的本地 endpoint `http://127.0.0.1:23119/paper-bridge/attach`，插件内部调用官方 `Zotero.Attachments.importFromFile` 把 PDF 作为 `imported_file` 附件挂到论文条目下——走官方 API，**不直接改数据库，零损库风险**。
 
 ## 安装
@@ -74,7 +74,7 @@ cp -r skill ~/.claude/skills/paper-summary
 
 在 AI agent 里直接给出 citekey：
 
-- `解读 suAttentionSinkTransformers2026` —— 默认紧凑 1-2 页简短版
+- `解读 suAttentionSinkTransformers2026` —— 默认约 2 页、优先含 1 张主图的简短版
 - `详细解读 suAttentionSinkTransformers2026` —— 详细多章节、图文并茂版
 
 agent 会自动解析原 PDF、生成解读 PDF，并挂到该论文条目下。
@@ -83,7 +83,7 @@ agent 会自动解析原 PDF、生成解读 PDF，并挂到该论文条目下。
 
 | 模式 | 触发 | 篇幅 | 文件名 |
 |------|------|------|--------|
-| **简短（默认）** | 未明确要求"详细" | 紧凑 1-2 页 | `<论文标题>_brief.pdf` |
+| **简短（默认）** | 未明确要求"详细" | 约 2 页，优先含 1 张主图 | `<论文标题>_brief.pdf` |
 | **详细** | 明确说"详细/完整/图文并茂" | 逐章节深入 | `<论文标题>.pdf` |
 
 解读 PDF 的排版规范（中文叙述、术语保留英文、公式用 LaTeX、关键图截图、数值例子、AI 批判性分析等）详见 [`skill/SKILL.md`](skill/SKILL.md)。
