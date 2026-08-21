@@ -1,11 +1,11 @@
 ---
 name: paper-summary
-description: When the user provides a Zotero Better BibTeX citation-key and asks to summarize/interpret a paper, refer to this rule. The ONLY input is a Zotero citekey; output is an interpretation PDF (brief or detailed) attached back into Zotero.
+description: When the user provides a Zotero Better BibTeX citation-key and asks to summarize or interpret a paper, create a brief or detailed interpretation PDF and attach it through Zotero 10's Local API. The only input is a Zotero citekey.
 ---
 
 # 学术论文 PDF 解读规范（Zotero citekey 驱动）
 
-本 skill **唯一输入是 Zotero Better BibTeX 的 citation-key**（如 `suAttentionSinkTransformers2026`）。流程固定为：用 citekey 从 Zotero 解析出原论文 PDF → 生成解读 PDF（简短或详细）→ 作为附件挂回 Zotero 对应论文条目。产物**统一用 LaTeX 编写、用 `xelatex` 编译为 PDF**，不生成 HTML/Markdown。
+本 skill **唯一输入是 Zotero Better BibTeX 的 citation-key**（如 `suAttentionSinkTransformers2026`）。流程固定为：用 citekey 从 Zotero 解析出原论文 PDF → 生成解读 PDF（简短或详细）→ 通过 Zotero 10 Local API 作为附件挂回对应论文条目。产物**统一用 LaTeX 编写、用 `xelatex` 编译为 PDF**，不生成 HTML/Markdown。
 
 ## 零、固定流程（先判定再动手）
 
@@ -24,7 +24,7 @@ description: When the user provides a Zotero Better BibTeX citation-key and asks
 1. **拿 citekey**：用户提供 citekey；未提供则要求用户给出，不要用标题猜。
 2. **解析原 PDF 与 attachmentKey**（详见 4.1）：调 Better BibTeX JSON-RPC `item.attachments(citekey)`，得到原论文 PDF 的绝对 `path` 和附件 key（从 `open` URL 末段解析）。
 3. **创建独立运行目录并生成解读 PDF**：为本次任务创建唯一的临时 `runDir`，写入标记文件 `.paper-summary-run`；所有截图、LaTeX 文件、校验产物及最终解读 PDF 都只能写入该目录。将 skill 自带的 `assets/paper_style.tex` 复制到 `runDir/assets/paper_style.tex` 后再编译。
-4. **挂回 Zotero**（详见 4.3）：调 bridge endpoint，把解读 PDF 作为附件挂到该论文条目下。
+4. **挂回 Zotero**（详见 4.3）：用 Zotero 10 自带的 Local API 创建附件并完整上传文件。
 5. **确认并强制清理**：仅在挂载结果通过 4.4 的成功判定后，删除整个 `runDir`，包括最终解读 PDF；挂载失败则保留 `runDir` 供重试或手动挂载。
 
 ### 0.2 独立运行目录与挂载后强制清理
@@ -314,7 +314,7 @@ curl -s -X POST http://127.0.0.1:23119/better-bibtex/json-rpc \
 ```
 
 - **`path`**：原论文 PDF 的绝对路径，供后续截图与解读使用。
-- **`attachmentKey`**：取 `open` URL 末段（`items/` 后那一段，如 `NZ5LELWY`）。挂载时传给 bridge，用于反查父条目。
+- **`attachmentKey`**：取 `open` URL 末段（`items/` 后那一段，如 `NZ5LELWY`）。挂载脚本会通过 Local API 读取该原附件的 `parentItem`，不要假定原附件 key 就是论文父条目 key。
 - **多个附件**：若 `result` 有多条（如论文带多个 PDF），优先取 `contentType` 为 PDF、或文件名与论文标题最匹配的一条；无法判定时向用户确认。
 - **citekey not found / 无 PDF 附件**：明确报错并停止，提示用户核对 citekey；不要退化去用标题搜索。
 
@@ -324,35 +324,45 @@ curl -s -X POST http://127.0.0.1:23119/better-bibtex/json-rpc \
 
 ### 4.3 挂回 Zotero
 
-挂载依赖常驻的极简 Zotero 插件 **Paper Summary Bridge**（源码与 xpi 在项目根目录 `zotero-paper-bridge/`、`paper-bridge.xpi`），它注册了本地 endpoint `http://127.0.0.1:23119/paper-bridge/attach`，内部调用官方 `Zotero.Attachments.importFromFile` 完成挂载，零损库风险。
+Zotero 10 的 Local API 原生支持 write requests 和 full file uploads。使用 skill 自带的确定性脚本 `scripts/zotero_local_attach.py`；不要自行拼装多阶段请求。脚本会：
 
-调用（`attachmentKey` 用 4.1 解析出的值，`reportPath` 必须是绝对路径）：
+1. 获取并校验 `Zotero-Server-ID`；
+2. 读取原附件并取得 `parentItem`；
+3. 创建 `imported_file` PDF 子附件；
+4. 完成 upload authorization、文件字节上传与 upload registration；
+5. 通过 `/file/view/url` 回读 storage 文件，并核对父条目、附件字段、文件存在性、大小与 MD5；
+6. 仅在全部验证通过后输出 `ok: true`。
+
+先把 `skillDir` 解析为当前 `SKILL.md` 所在目录的绝对路径，再调用脚本。`attachmentKey` 用 4.1 解析出的值，`reportPath` 必须是 `runDir` 中的绝对路径：
 
 ```bash
-curl -s -X POST http://127.0.0.1:23119/paper-bridge/attach \
-  -H 'Content-Type: application/json' \
-  -d "$(python3 -c 'import json; print(json.dumps({
-      "attachmentKey": "NZ5LELWY",
-      "reportPath": "/Users/zeon/Documents/Paper/<论文标题>.pdf",
-      "title": "AI 解读报告 - <论文标题>"
-  }))')"
+python3 "<skillDir>/scripts/zotero_local_attach.py" \
+  --source-attachment-key NZ5LELWY \
+  --file "/absolute/paper-summary-XXXXXX/<论文标题>_brief.pdf" \
+  --title "AI 解读报告 - <论文标题>"
 ```
 
-成功返回 `{"ok":true,"newAttachmentKey":"...","parentKey":"..."}`，解读 PDF 即作为附件出现在该论文条目下，并被 Zotero 拷入 storage、纳入同步与全文索引。Bridge 必须等待 `Zotero.Attachments.importFromFile(...)` 和附件标题保存完成后才返回该响应；不得把请求已发送或 HTTP 200 单独视为挂载成功。
+Local API 必须在 Zotero「设置 → Advanced」中启用 “Allow other applications on this computer to communicate with Zotero”。首次写入会由 Zotero 弹窗授权；优先让用户自行选择授权方式。若选择一次性 `Allow`，多阶段上传可能再次请求授权；`Always Allow` 可避免重复弹窗，并可随时在 Zotero 设置中撤销。不得记录、打印或写入 skill 任何 Local API key。
+
+兼容性说明：Zotero 10 Local API 当前不提供 Web API 的 `/items/new` template endpoint。必须使用随 skill 提供的 uploader；它会直接构造官方 editable attachment JSON，已覆盖这一差异。
 
 ### 4.4 挂载确认与本地强制清理
 
 只有同时满足以下条件，才判定挂载成功：
 
-1. HTTP 响应状态为 200；
-2. 响应体可解析为 JSON；
-3. JSON 中 `ok` 严格等于 `true`；
-4. `newAttachmentKey` 存在且为非空字符串。
+1. uploader 的最终响应可解析为 JSON；
+2. JSON 中 `ok` 严格等于 `true`；
+3. `newAttachmentKey` 和 `parentKey` 均存在且为非空字符串；
+4. uploader 的 `verified` 严格等于 `true`，且 `storedPath` 指向存在的 storage 文件；
+5. 不得把附件条目已创建、文件字节已发送、HTTP 200/201/204 中的任一步单独视为整体成功。
 
 全部满足后，先按 0.2 校验 `runDir` 的绝对路径、目录名与 `.paper-summary-run` 标记，再删除整个 `runDir`。删除后确认该路径已不存在；如果仍存在，必须报告清理失败，不得声称“本地文件已全部删除”。最终回复只说明“解读 PDF 已挂载到 Zotero，本地临时产物已全部删除”，不要提供已经失效的本地 PDF 路径。
 
 ### 4.5 失败兜底
 
-- **连接失败 / 404**：说明 Bridge 插件未安装/未启用，或 Zotero 未运行。提示用户：先确认 Zotero 在运行，再在「工具 → 插件 → 齿轮 → Install Add-on From File」安装 `paper-bridge.xpi`。
-- **退化方案**：插件不可用时，给出等效的 Run JavaScript 片段（`Zotero.Attachments.importFromFile({file, parentItemID, contentType:"application/pdf"})`，parentItemID 由 attachmentKey 反查），让用户在「工具 → 开发者 → Run JavaScript」手动执行。用户明确确认手动挂载成功前，必须保留 `runDir`。
-- 不得静默失败：挂载未成功时必须明确告知用户解读 PDF 的本地绝对路径，以便手动拖入；不得删除 `runDir`。
+- **Local API 未启用**：提示用户在 Zotero「设置 → Advanced」启用 “Allow other applications on this computer to communicate with Zotero”，然后重试一次；本次任务若已获用户授权，可用 UI 完成该设置。
+- **Zotero 版本低于 10**：明确说明本流程要求 Zotero 10 或更高版本，保留 `runDir`，不要尝试其他写入机制。
+- **401 / 用户拒绝授权**：重新请求一次授权；用户明确拒绝后停止写入并保留 `runDir`，不得绕过授权。
+- **404**：先确认调用的是 `/api/` 下的 Zotero 10 Local API，并确认使用的是 skill 自带 uploader；不要调用 `/api/items/new`。
+- **上传中途失败**：不得把半完成状态视为成功。报告错误与可能已创建的新附件 key，并保留 `runDir` 供检查或重试。
+- 不得静默失败：挂载失败时必须明确告知用户解读 PDF 的本地绝对路径；用户明确确认已手动挂载前不得删除 `runDir`。
