@@ -326,7 +326,7 @@ curl -s -X POST http://127.0.0.1:23119/better-bibtex/json-rpc \
 
 Zotero 10 的 Local API 原生支持 write requests 和 full file uploads。使用 skill 自带的确定性脚本 `scripts/zotero_local_attach.py`；不要自行拼装多阶段请求。脚本会：
 
-1. 获取并校验 `Zotero-Server-ID`；
+1. 获取并校验 `Zotero-Server-ID`；在 macOS 上同时从 Keychain 读取该实例已记住的授权；
 2. 读取原附件并取得 `parentItem`；
 3. 创建 `imported_file` PDF 子附件；
 4. 完成 upload authorization、文件字节上传与 upload registration；
@@ -343,6 +343,16 @@ python3 "<skillDir>/scripts/zotero_local_attach.py" \
 ```
 
 Local API 必须在 Zotero「设置 → Advanced」中启用 “Allow other applications on this computer to communicate with Zotero”。首次写入会由 Zotero 弹窗授权；优先让用户自行选择授权方式。若选择一次性 `Allow`，多阶段上传可能再次请求授权；`Always Allow` 可避免重复弹窗，并可随时在 Zotero 设置中撤销。不得记录、打印或写入 skill 任何 Local API key。
+
+选择 `Always Allow` 后，在 macOS 上 uploader 会通过 Security.framework 将返回的 key 保存到系统 Keychain：service 固定为 `org.openai.codex.paper-summary.zotero-local-api`，account 使用当前 `Zotero-Server-ID`。key 不进入命令行参数、普通文件、日志、JSON 输出或 Git；新进程和新对话会按当前 server ID 自动读取。Windows/Linux 上仍可完成上传，但当前脚本不跨进程保存 key，新进程可能再次触发 Zotero 授权。若写请求返回 `401`，uploader 会删除失效的 macOS Keychain 记录并重新申请授权。`ZOTERO_LOCAL_API_KEY` 仅保留为显式的进程级覆盖，不作为默认持久化方式。
+
+需要只读确认持久授权是否可被新进程发现时，运行：
+
+```bash
+python3 "<skillDir>/scripts/zotero_local_attach.py" --credential-status
+```
+
+在 macOS 上，成功状态应包含 `keychainAvailable: true`；已有持久授权时还应包含 `rememberedCredentialFound: true` 和 `credentialSource: "keychain"`。Windows/Linux 会报告 `keychainAvailable: false`。该检查不会申请授权、不会显示 key，也不会创建或修改 Zotero 条目。
 
 兼容性说明：Zotero 10 Local API 当前不提供 Web API 的 `/items/new` template endpoint。必须使用随 skill 提供的 uploader；它会直接构造官方 editable attachment JSON，已覆盖这一差异。
 
@@ -362,7 +372,7 @@ Local API 必须在 Zotero「设置 → Advanced」中启用 “Allow other appl
 
 - **Local API 未启用**：提示用户在 Zotero「设置 → Advanced」启用 “Allow other applications on this computer to communicate with Zotero”，然后重试一次；本次任务若已获用户授权，可用 UI 完成该设置。
 - **Zotero 版本低于 10**：明确说明本流程要求 Zotero 10 或更高版本，保留 `runDir`，不要尝试其他写入机制。
-- **401 / 用户拒绝授权**：重新请求一次授权；用户明确拒绝后停止写入并保留 `runDir`，不得绕过授权。
+- **401 / 用户拒绝授权**：若 key 来自 Keychain，先删除失效记录，再重新请求一次授权；用户明确拒绝后停止写入并保留 `runDir`，不得绕过授权。
 - **404**：先确认调用的是 `/api/` 下的 Zotero 10 Local API，并确认使用的是 skill 自带 uploader；不要调用 `/api/items/new`。
 - **上传中途失败**：不得把半完成状态视为成功。报告错误与可能已创建的新附件 key，并保留 `runDir` 供检查或重试。
 - 不得静默失败：挂载失败时必须明确告知用户解读 PDF 的本地绝对路径；用户明确确认已手动挂载前不得删除 `runDir`。

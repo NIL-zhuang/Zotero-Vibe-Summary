@@ -1,113 +1,158 @@
 # Zotero Paper Summary
 
-用 Claude（或其它支持 skill 的 AI agent）从 Zotero 文献一键生成论文解读 PDF，并自动作为附件挂回 Zotero 对应条目。
+给支持 skill 的 AI agent 一个 Zotero Better BibTeX citation key，自动读取论文、生成中文解读 PDF，并把报告作为附件挂回原论文条目。
 
-只需提供一个 Better BibTeX 的 **citation-key**，整条链路自动完成：
-
-```
-citekey  ──►  解析原论文 PDF  ──►  生成解读 PDF（约 2 页并优先含主图 / 详细多章节）  ──►  作为附件挂回 Zotero
+```text
+citekey  ->  定位 Zotero 中的原论文 PDF  ->  生成解读 PDF  ->  通过 Zotero 10 Local API 挂载
 ```
 
 ![解读 PDF 示例](asserts/demo.png)
 
-## 组成
+本仓库面向 **Zotero 10**。附件写入直接使用 Zotero 10 自带的 [authenticated Local API](https://www.zotero.org/support/dev/web_api/v3/local_api)，不再需要 Paper Summary Bridge 或其它自定义 bridge 插件，也不会直接修改 Zotero 数据库。Better BibTeX 仍是必需插件，用于把 citation key 精确解析为论文附件。
 
-本仓库包含两部分，配合使用：
+## 仓库结构
 
-| 目录 | 作用 |
-|------|------|
-| [`plugin/`](plugin/) | **Paper Summary Bridge** —— 一个极简 Zotero 插件，注册本地 HTTP endpoint，把生成好的 PDF 通过官方 API 挂载为附件 |
-| [`skill/`](skill/) | **paper-summary skill** —— 给 AI agent 的规范，定义如何用 citekey 解析论文、生成 LaTeX 解读 PDF、调用 bridge 挂载 |
-
-```
-zotero-paper-summary/
-├── plugin/
-│   ├── src/
-│   │   ├── manifest.json     # 插件清单（Zotero 7+ bootstrap）
-│   │   └── bootstrap.js      # 注册 /paper-bridge/attach endpoint
-│   ├── paper-bridge.xpi      # 打包好的插件，可直接安装
-│   └── build.sh              # 从 src/ 重新打包 xpi
-└── skill/
-    ├── SKILL.md              # 解读 PDF 生成规范（核心）
-    └── assets/
-        └── paper_style.tex   # LaTeX 样式模板（配色/环境/preamble）
+```text
+Zotero-Vibe-Summary/
+├── skill/
+│   ├── SKILL.md                       # 工作流与解读 PDF 规范
+│   ├── assets/paper_style.tex         # LaTeX 样式模板
+│   └── scripts/zotero_local_attach.py # Zotero 10 Local API 上传器
+├── asserts/demo.png                   # 输出示例
+└── README.md
 ```
 
-## 工作原理
+## 依赖
 
-1. **解析**：skill 调用 Better BibTeX 的 JSON-RPC `item.attachments(citekey)`，拿到原论文 PDF 的绝对路径和附件 key。
-2. **生成**：AI agent 按 `SKILL.md` 规范，从原 PDF 截图、用 `xelatex` 编译出解读 PDF（默认约 2 页并优先含 1 张主图，可要求详细多章节版）。
-3. **挂载**：skill `POST` 到插件的本地 endpoint `http://127.0.0.1:23119/paper-bridge/attach`，插件内部调用官方 `Zotero.Attachments.importFromFile` 把 PDF 作为 `imported_file` 附件挂到论文条目下——走官方 API，**不直接改数据库，零损库风险**。
+以下依赖都是 skill 完整运行所需的依赖；仓库内的上传器本身只使用 Python 标准库。
+
+| 依赖 | 要求 | 用途 |
+|---|---|---|
+| [Zotero](https://www.zotero.org/download/) | **10.x**，运行过程中保持开启 | 提供本地文献库和 authenticated Local API |
+| [Better BibTeX for Zotero](https://retorque.re/zotero-better-bibtex/installation/) | 安装与 Zotero 10 兼容的版本 | 通过 [JSON-RPC](https://retorque.re/zotero-better-bibtex/exporting/json-rpc/) 的 `item.attachments(citekey)` 定位原 PDF |
+| 支持本地 skill 的 AI agent | 推荐 Codex；也可使用兼容 `SKILL.md` 的 agent | 执行解析、阅读、写作、编译和挂载流程 |
+| Python | **3.9+** | 运行 `zotero_local_attach.py`；上传器无第三方 Python 依赖 |
+| [PyMuPDF](https://pymupdf.readthedocs.io/) | 可导入为 `fitz` | 提取 PDF 文本、裁取论文主图和渲染检查 |
+| TeX Live / MacTeX / MiKTeX | 必须提供 `xelatex`、`ctex` 和下列 LaTeX 宏包 | 生成中文 PDF |
+| `curl` | 任意近期版本 | 调用 Better BibTeX JSON-RPC |
+
+LaTeX 模板会用到这些包：`ctex`、`amsmath`、`amssymb`、`amsthm`、`mathtools`、`bm`、`graphicx`、`booktabs`、`array`、`multirow`、`makecell`、`xcolor`、`geometry`、`enumitem`、`tcolorbox`、`titlesec`、`hyperref` 和 `float`。安装完整 TeX Live/MacTeX 通常会一次提供它们；精简发行版需要另行安装缺失包。
+
+安装 Python 依赖：
+
+```bash
+python3 -m pip install pymupdf
+```
+
+安装后可快速检查：
+
+```bash
+python3 --version
+python3 -c 'import fitz; print(fitz.__version__)'
+xelatex --version
+curl --version
+```
 
 ## 安装
 
-### 前置依赖
+### 1. 配置 Zotero 10
 
-- **Zotero 7+**（在 Zotero 9.0.4 上验证通过），且保持运行
-- **[Better BibTeX](https://retorque.re/zotero-better-bibtex/)** 插件（提供 citekey 与 JSON-RPC 解析）
-- 生成 PDF 需要 **TeX Live**（`xelatex`）与 **pymupdf**（`pip install pymupdf`，用于截图）
+1. 启动 Zotero 10。
+2. 在 Zotero「设置 → Advanced」中启用 **Allow other applications on this computer to communicate with Zotero**。
+3. 安装 Better BibTeX，并确认目标论文已有 citation key 和本地 PDF 附件。
 
-### 1. 安装 Bridge 插件
-
-在 Zotero 中：**工具 → 插件 → 右上角齿轮 → Install Add-on From File**，选择 [`plugin/paper-bridge.xpi`](plugin/paper-bridge.xpi)。
-
-验证是否生效（返回 `400` 且提示缺参数即为成功）：
-
-```bash
-curl -s -X POST http://127.0.0.1:23119/paper-bridge/attach \
-  -H 'Content-Type: application/json' -d '{}'
-# 预期: 缺少 attachmentKey 或 reportPath
-```
-
-> 想自行修改插件后重新打包：`bash plugin/build.sh`
+不需要安装本仓库自己的 Zotero 插件。如果曾安装旧版 **Paper Summary Bridge**，请在 Zotero 的「工具 → 插件」中卸载；新版 skill 已完全替代它。
 
 ### 2. 安装 skill
 
-把 `skill/` 内容放到你的 AI agent 的 skill 目录。以 Claude Code 为例：
+Codex：
 
 ```bash
-cp -r skill ~/.claude/skills/paper-summary
-# 或软链到本仓库
+mkdir -p ~/.codex/skills/paper-summary
+cp -R skill/. ~/.codex/skills/paper-summary/
 ```
+
+Claude Code 等兼容本地 skill 的 agent，可把 `skill/` 的内容复制到其对应的 `paper-summary` skill 目录。例如：
+
+```bash
+mkdir -p ~/.claude/skills/paper-summary
+cp -R skill/. ~/.claude/skills/paper-summary/
+```
+
+修改仓库里的 skill 后，需要重新复制；开发时也可以按 agent 的要求建立软链接。
+
+### 3. 验证 Zotero 与 Better BibTeX
+
+Zotero Local API：
+
+```bash
+curl -s -D - http://127.0.0.1:23119/api/ -o /dev/null
+```
+
+响应头应包含 `Zotero-Server-ID` 和以 `10.` 开头的 `X-Zotero-Version`。如果返回 `403`，请重新检查 Zotero 的 Local API 设置。
+
+Better BibTeX JSON-RPC：
+
+```bash
+curl -s -X POST http://127.0.0.1:23119/better-bibtex/json-rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"api.ready","params":[],"id":1}'
+```
+
+响应中应包含 Zotero 和 Better BibTeX 的版本。
 
 ## 使用
 
-在 AI agent 里直接给出 citekey：
+在 agent 中提供 citation key：
 
-- `解读 suAttentionSinkTransformers2026` —— 默认约 2 页、优先含 1 张主图的简短版
-- `详细解读 suAttentionSinkTransformers2026` —— 详细多章节、图文并茂版
+- `解读 suAttentionSinkTransformers2026`：默认生成约 2 页的简短版，并优先包含一张主图。
+- `详细解读 suAttentionSinkTransformers2026`：生成逐章节、图文并茂的详细版。
 
-agent 会自动解析原 PDF、生成解读 PDF，并挂到该论文条目下。
+| 模式 | 触发方式 | 输出文件名 |
+|---|---|---|
+| 简短版（默认） | 未明确要求详细解读 | `<论文标题>_brief.pdf` |
+| 详细版 | 明确要求“详细”“完整”或“图文并茂” | `<论文标题>.pdf` |
 
-## 两种解读模式
+完整的写作、排版、截图、验证和清理规范见 [`skill/SKILL.md`](skill/SKILL.md)。
 
-| 模式 | 触发 | 篇幅 | 文件名 |
-|------|------|------|--------|
-| **简短（默认）** | 未明确要求"详细" | 约 2 页，优先含 1 张主图 | `<论文标题>_brief.pdf` |
-| **详细** | 明确说"详细/完整/图文并茂" | 逐章节深入 | `<论文标题>.pdf` |
+## Zotero 10 授权与上传
 
-解读 PDF 的排版规范（中文叙述、术语保留英文、公式用 LaTeX、关键图截图、数值例子、AI 批判性分析等）详见 [`skill/SKILL.md`](skill/SKILL.md)。
+第一次写入时，Zotero 会显示授权对话框：
 
-## Bridge 插件接口
+- `Allow`：一次性授权。上传包含多个写请求，因此 Zotero 可能再次询问。
+- `Always Allow`：允许后续写入复用同一个 Local API key；可随时在 Zotero Advanced 设置中用 **Clear Write Authorizations** 撤销。
+- `Deny`：停止挂载，生成的临时报告会保留，便于手动处理。
 
-`POST http://127.0.0.1:23119/paper-bridge/attach`
+在 macOS 上，skill 会把 `Always Allow` 返回的 key 保存到系统 Keychain，service 为 `org.openai.codex.paper-summary.zotero-local-api`，不会把 key 写入仓库、普通文件、命令行或日志。Windows/Linux 上上传流程同样可用，但当前脚本不跨进程保存 key；新进程可能再次触发 Zotero 授权。高级用户也可通过进程级环境变量 `ZOTERO_LOCAL_API_KEY` 显式提供 key。
 
-请求体：
+macOS 上可只读检查持久授权是否可用：
 
-```json
-{
-  "attachmentKey": "NZ5LELWY",
-  "reportPath": "/abs/path/to/report.pdf",
-  "title": "AI 解读报告 - 论文标题"
-}
+```bash
+python3 skill/scripts/zotero_local_attach.py --credential-status
 ```
 
-- `attachmentKey`：论文现有 PDF 附件的 key，插件据此反查父条目（无需手动指定父 item）
-- `reportPath`：要挂载的 PDF 绝对路径
-- `title`（可选）：附件显示名
+该检查不会申请授权，也不会修改 Zotero 条目或显示 key。
 
-成功返回：
+上传器的完整调用方式：
 
-```json
-{"ok": true, "newAttachmentKey": "8HCPQDBP", "parentKey": "H7N45LPU"}
+```bash
+python3 skill/scripts/zotero_local_attach.py \
+  --source-attachment-key NZ5LELWY \
+  --file "/absolute/path/to/report.pdf" \
+  --title "AI 解读报告 - 论文标题"
 ```
+
+脚本会依次创建 `imported_file` 子附件、上传完整 PDF、注册上传，并重新读取附件和 storage 文件校验 parent、字段、文件大小与 MD5。只有全部验证通过才会返回 `"ok": true`。
+
+## 常见问题
+
+- **无法连接 `127.0.0.1:23119`**：确认 Zotero 正在运行。
+- **Local API 返回 `403`**：在 Zotero Advanced 设置中启用本地通信。
+- **提示需要 Zotero 10+**：升级 Zotero；本仓库不再维护 Zotero 7/8/9 的 bridge 方案。
+- **citekey 找不到或没有 PDF**：检查 Better BibTeX、citation key 和论文的本地 PDF 附件。
+- **`xelatex` 找不到宏包**：安装完整 TeX 发行版，或按“依赖”一节补齐宏包。
+- **挂载失败**：不要删除本次临时目录；保留生成的 PDF 和错误信息后重试或手动拖入 Zotero。
+
+## 实现说明
+
+Zotero 10 Local API 的读取请求无需认证；写请求通过运行时授予的 Local API key 鉴权。报告上传采用 Zotero 官方三阶段 full-file upload 流程，写入结果会作为普通 Zotero 变更出现在界面中，并按 Zotero 自身同步设置处理。
